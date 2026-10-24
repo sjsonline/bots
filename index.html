@@ -126,7 +126,7 @@ input:focus{border-color:var(--fuel)}
 .boosts .bn{display:block}
 .rpctl{display:flex;align-items:center;gap:8px;padding:8px 12px}.rpctl input[type=range]{flex:1;accent-color:var(--fuel);min-width:0}.rpctl .ib{width:44px;height:44px;padding:0;display:grid;place-items:center}
 .boosts.b5{grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;padding:8px 8px 10px}.boosts.b5 button{font-size:11px;padding:3px}.boosts.b5 button small{font-size:10px}
-.boost-fd{background:#10291c;color:#5BE3A0}
+.boost-fd,.boost-rush{background:#10291c;color:#5BE3A0}
 .hubpill{white-space:nowrap;gap:6px;min-width:0;overflow:hidden;letter-spacing:.02em}
 .hubpill span:last-child{overflow:hidden;text-overflow:ellipsis}
 .hubline .spd{min-height:0;min-width:48px;padding:0 8px;font-size:12px;border-radius:8px}
@@ -290,7 +290,7 @@ html.tv body{font-size:17px}
 .fcur::before,.fcur::after{content:'';position:absolute;background:var(--fuel)}.fcur::before{left:50%;top:-9px;bottom:-9px;width:2px;margin-left:-1px}.fcur::after{top:50%;left:-9px;right:-9px;height:2px;margin-top:-1px}
 #fc:focus{outline:none}#fc:focus~.fcur{display:block}
 /* TV / widescreen match: scoreboard on top, the field turned landscape in the middle, controls along the bottom */
-#app.tvmatch{max-width:none;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);grid-template-rows:auto minmax(0,1fr) auto;column-gap:12px;height:100vh;padding:0 12px;overflow:hidden}
+#app.tvmatch{max-width:none;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);grid-template-rows:auto minmax(0,1fr) auto auto;column-gap:12px;height:100vh;padding:0 12px;overflow:hidden}
 #app.tvmatch>.mhud{grid-column:1;grid-row:1;padding:8px 0 6px}
 #app.tvmatch>.hubline{grid-column:2;grid-row:1;align-self:center;padding:0}
 #app.tvmatch>.hubline .hubpill{flex:1}
@@ -298,6 +298,8 @@ html.tv body{font-size:17px}
 #app.tvmatch>.piecebar{grid-column:1;grid-row:3;align-self:center;padding:6px 0 10px}
 #app.tvmatch>.boosts{grid-column:2;grid-row:3;padding:6px 0 10px;grid-template-columns:repeat(auto-fit,minmax(0,1fr))}
 #app.tvmatch>.fieldwrap+.boosts{grid-column:1 / -1}   /* seasons without a SCORE IN bar: boosts use the whole row */
+#app.tvmatch>.piecebar+.piecebar{grid-row:4;padding-top:0}   /* two bars (2024 MODE + SCORE IN): stacked, boosts beside both */
+#app.tvmatch>.piecebar+.piecebar+.boosts{grid-row:3 / span 2}
 #app.tvmatch>.boosts button{min-height:56px}
 /* announcements + locked seasons */
 .bell{position:relative}.bell .badge{position:absolute;top:4px;right:4px;min-width:18px;height:18px;border-radius:9px;background:var(--red);color:#fff;font:700 11px/18px var(--body);padding:0 5px}
@@ -320,6 +322,7 @@ html.tv #app:has(#pv)>.topbar{grid-column:1 / -1}
 html.tv #app:has(#pv)>.preview{grid-column:1;grid-row:2;height:auto!important;min-height:0;border-radius:16px;margin:0 0 14px}
 html.tv #app:has(#pv)>.pad{grid-column:2;grid-row:2;overflow-y:auto;padding-top:4px}
 .piecebar button[data-goal].on{background:var(--fuel);color:#16130A}
+.piecebar button[data-mode].on{background:#8DB9FF;color:#0E1116}.piecebar button[data-mode=""].on{background:var(--text);color:#0E1116}
 .piecebar button[data-want=""].on{background:var(--text);color:#0E1116}
 .piecebar .pbheld{margin-left:auto;font-family:var(--disp);font-size:11px;color:var(--muted);letter-spacing:.06em}
 .league{display:flex;align-items:center;gap:10px}
@@ -30600,6 +30603,46 @@ const FW=27, FL=54, CENTER=27, BAR={B:41,T:13}, ROB_R=1.55;
 const other=A=>A==='B'?'T':'B';
 let MIRROR_X=true;   // most games are point-symmetric (T = B rotated 180°); mirror-symmetric games (2024) keep x
 const M=(A,x,y)=>A==='B'?{x,y}:{x:MIRROR_X?FW-x:x,y:FL-y};
+/* ---------- crowd control, shared by every season's engine ----------
+   Partners used to drive into each other and shove for the rest of the match. Now they steer around each other,
+   sidestep when blocked, and the one with lower priority gives way when both want the same place. */
+function crowdRank(m,o,r){if(!!o.isPlayer!==!!r.isPlayer)return !!o.isPlayer;return m.robots.indexOf(o)<m.robots.indexOf(r)}   // the player first, then list order
+function crowdSteer(m,r,ux,uy,skip){   // bend a unit heading away from partners just ahead or beside (opponents still collide: that's defense)
+  let sx=0,sy=0; const R2=ROB_R*2+.7;
+  for(const o of m.robots){if(o===r||o.A!==r.A||(skip&&skip(o)))continue; const ox=r.x-o.x, oy=r.y-o.y, od=Math.hypot(ox,oy);
+    if(od<R2&&od>.01&&-(ux*ox+uy*oy)>-.3*od){const w=(R2-od)/R2*(crowdRank(m,o,r)?1.3:.7);sx+=ox/od*w;sy+=oy/od*w}}
+  if(!sx&&!sy) return [ux,uy]; ux+=sx*1.2; uy+=sy*1.2; const n=Math.hypot(ux,uy)||1; return [ux/n,uy/n];
+}
+function crowdTouching(m,r,skip){return m.robots.filter(o=>o!==r&&!(skip&&skip(o))&&Math.hypot(o.x-r.x,o.y-r.y)<ROB_R*2.4).sort((a,b)=>Math.hypot(a.x-r.x,a.y-r.y)-Math.hypot(b.x-r.x,b.y-r.y))[0]||null}
+function crowdSidestep(m,r,nb,wp){   // a waypoint beside the robot in the way: a head-on pair both go to their own right, so they pass
+  if(!nb||!wp) return null;
+  const gx=wp.x-r.x, gy=wp.y-r.y, gd=Math.hypot(gx,gy)||1, ux=gx/gd, uy=gy/gd;
+  const cr=ux*(nb.y-r.y)-uy*(nb.x-r.x), sg=Math.abs(cr)<.35?-1:(cr>0?-1:1);
+  for(const k of [sg,-sg]) for(const d of [2.4,1.6,3.4]){const x=r.x-uy*k*d+ux*.6, y=r.y+ux*k*d+uy*.6;
+    if(!m.blocked(r,x,y)&&!m.robots.some(o=>o!==r&&Math.hypot(o.x-x,o.y-y)<ROB_R*2)) return {x,y}}
+  return null;
+}
+// a partner with priority is after (or parked on) the same place as r
+function crowdContested(m,r,nb){const g=r.goal; if(!g||!nb||nb.A!==r.A||!crowdRank(m,nb,r)) return false; const SEP=ROB_R*2+1;
+  return Math.hypot(nb.x-g.x,nb.y-g.y)<SEP||(nb.goal&&Math.hypot(nb.goal.x-g.x,nb.goal.y-g.y)<SEP)}
+// a partner is loading at the station we're headed for: hold a robot-length back instead of shoving into it
+function crowdQueue(m,r){const g=r.goal; if(!g||g.type!=='get'||(r.task&&r.task.src&&r.task.src.kind==='floor')) return false;
+  const busy=m.robots.some(o=>o!==r&&o.A===r.A&&o.lock>0&&Math.hypot(o.x-g.x,o.y-g.y)<1.2); if(!busy) return false;
+  return Math.hypot(r.x-g.x,r.y-g.y)<ROB_R*2+.6}
+// no real progress toward the current waypoint for 2 s (robots shoved in circles never trip the per-frame stuck check)
+function crowdNoProgress(r,wp,dt){const d=Math.hypot(wp.x-r.x,wp.y-r.y), P=r._pg;
+  if(!P||P.wp!==wp||d<P.best-.4){r._pg={wp,best:d,t:0};return false} P.t+=dt; if(P.t>2){r._pg=null;return true} return false}
+// two partners squeezing through the same gap (a BUMP lane, a corner): the one with lower priority waits a moment
+function crowdHold(m,r,wp,dt,skip){
+  if(r.holdOff>0){r.holdOff-=dt;return false}
+  const G2=ROB_R*2+.3, o=m.robots.find(o=>o!==r&&o.A===r.A&&!(skip&&skip(o))&&o.path&&o.path.length&&crowdRank(m,o,r)&&Math.hypot(o.x-r.x,o.y-r.y)<G2+.8&&
+    (Math.hypot(o.path[0].x-wp.x,o.path[0].y-wp.y)<G2||Math.hypot(o.x-wp.x,o.y-wp.y)<G2));
+  if(!o){r.holdT=0;return false}
+  r.holdT=(r.holdT||0)+dt; if(r.holdT>2.5){r.holdT=0;r.holdOff=2;return false}   // never wait forever
+  return true}
+// partners don't all wait on one spot
+function crowdWait(m,r,p){const mates=m.robots.filter(o=>o.A===r.A), i=mates.indexOf(r), off=[0,3.6,-3.6][i%3]||0, x=clamp(p.x+off,2,FW-2);
+  return m.blocked(r,x,p.y)?p:{x,y:p.y}}
 const BUMPS=[[4,11.2],[15.8,23]], TRENCH=[[0,4],[23,27]], HUBX=[11.2,15.8];
 const LANES_BUMP=[7.6,19.4], LANES_TRENCH=[2,25];
 const TOWER_C=18.7, TOWER_SPOTS=[[16.8,50.3],[18.7,50.3],[20.6,50.3]];
@@ -30674,7 +30717,8 @@ class Match{
       for(const Y of bars){
         let best=null,bc=1e9; const lanes=LANES_BUMP.map(x=>({x,b:true})).concat(r.st.low||r.dash?LANES_TRENCH.map(x=>({x,b:false})):[]);
         for(const L of lanes){const c=Math.abs(cur.x-L.x)+Math.abs(L.x-to.x)+(L.b&&!r.dash?(1/r.st.bump-1)*4:0);if(c<bc){bc=c;best=L}}
-        if(r.jit==null)r.jit=rnd(-1,1); const jitter=best.b?r.jit*1.6:r.jit*.5;
+        if(r.jit==null){const i=this.robots.filter(o=>o.A===r.A).indexOf(r);r.jit=[-.9,.9,0][i%3]+rnd(-.1,.1)}   // partners take different sides of a BUMP / TRENCH
+        const jitter=best.b?r.jit*1.6:r.jit*.5;
         if(Math.abs(cur.y-Y)>2.2) path.push({x:best.x+jitter,y:Y-dir*2.4});
         path.push({x:best.x+jitter,y:Y+dir*2.4}); cur={x:best.x,y:Y+dir*2.4};
       }
@@ -30683,18 +30727,37 @@ class Match{
   }
   travel(r,to){const crosses=Math.abs(this.side(r.y)-this.side(to.y));return (Math.abs(r.x-to.x)+Math.abs(r.y-to.y))*.85/r.st.speed+crosses*1.2}
   /* ---------- AI ---------- */
-  shootSpot(r){
-    if(!r.isPlayer){const me=this.robots.find(o=>o.isPlayer&&o.A===r.A&&!o.climbLv);
-      if(me){let sp=null;for(let k=0;k<8;k++){sp=this.shootSpot0(r);const g=me.goal||me;if(Math.hypot(sp.x-me.x,sp.y-me.y)>4&&Math.hypot(sp.x-g.x,sp.y-g.y)>3.5)return sp}return sp}}
-    return this.shootSpot0(r);
+  /* partners keep their shooting spots a robot-width apart: two robots heading for the same spot shove each other
+     for the rest of the match (and HOOD / SPOT shooters can't fire until they reach theirs) */
+  outranks(o,r){return crowdRank(this,o,r)}
+  spotTaken(r,sp,any){
+    const SEP=ROB_R*2+.45;
+    for(const o of this.robots){if(o===r||o.A!==r.A)continue;
+      const mine=any||this.outranks(o,r);
+      if(mine&&o.spot&&(o.mode==='shoot'||o.mode==='stage')&&Math.hypot(o.spot.x-sp.x,o.spot.y-sp.y)<SEP) return true;
+      if((o.climbLv>0||o.lock>0||(!o.path.length&&mine))&&Math.hypot(o.x-sp.x,o.y-sp.y)<SEP) return true;   // someone parked there
+    }
+    return false;
   }
-  shootSpot0(r){
-    const A=r.A, m=r.st.mode;
-    if(m==='close') return M(A,13.5+rnd(-1.7,1.7),43.5);
-    if(m==='hood'){const a=rnd(-1.1,1.1),R=rnd(4.6,7.5);return M(A,clamp(13.5+Math.sin(a)*R,3,24),Math.max(43.6,41+Math.cos(a)*R))}
-    if(m==='spot'){const a=rnd(-1,1),R=rnd(6.5,9);return M(A,clamp(13.5+Math.sin(a)*R,3,24),Math.max(43.6,41+Math.cos(a)*R))}
+  shootSpot(r){
+    const me=r.isPlayer?null:this.robots.find(o=>o.isPlayer&&o.A===r.A&&!o.climbLv);
+    let best=null,bd=-Infinity;
+    for(let k=0;k<14;k++){
+      const sp=this.shootSpot0(r,k);
+      const clearMe=!me||(Math.hypot(sp.x-me.x,sp.y-me.y)>4&&Math.hypot(sp.x-(me.goal||me).x,sp.y-(me.goal||me).y)>3.5);
+      if(clearMe&&!this.spotTaken(r,sp,true)) return sp;
+      const dmin=Math.min(...this.robots.filter(o=>o!==r&&o.A===r.A).map(o=>Math.min(Math.hypot(o.x-sp.x,o.y-sp.y),o.spot?Math.hypot(o.spot.x-sp.x,o.spot.y-sp.y):99)))-(clearMe?0:3);
+      if(!best||dmin>bd){bd=dmin;best=sp}
+    }
+    return best;
+  }
+  shootSpot0(r,k=0){
+    const A=r.A, m=r.st.mode, w=Math.min(1,k/6);   // later tries spread further out
+    if(m==='close') return M(A,13.5+rnd(-1.7,1.7)*(1+w),43.5+rnd(0,1.2)*w);
+    if(m==='hood'){const a=rnd(-1.1,1.1)*(1+.25*w),R=rnd(4.6,7.5);return M(A,clamp(13.5+Math.sin(a)*R,3,24),Math.max(43.6,41+Math.cos(a)*R))}
+    if(m==='spot'){const a=rnd(-1,1)*(1+.25*w),R=rnd(6.5,9);return M(A,clamp(13.5+Math.sin(a)*R,3,24),Math.max(43.6,41+Math.cos(a)*R))}
     const me=A==='B'?{x:r.x,y:r.y}:{x:FW-r.x,y:FL-r.y};
-    return M(A,clamp(me.x,3,24),rnd(43.5,45.5));
+    return M(A,clamp(me.x+(k?rnd(-1,1)*Math.min(9,1.5+k):0),3,24),rnd(43.5,45.5+1.5*w));
   }
   pickFuel(r,filter){
     let best=null,bs=1e9; const opp=r.A==='B'?BAR.T:BAR.B, autoHalf=this.t<this.R.auto;
@@ -30785,10 +30848,11 @@ class Match{
       const wantShoot=r.held>0&&(act||soonActive)&&(r.held>=r.st.cap||(ph.k==='auto'&&(r.held>=Math.min(r.st.cap,6)||this.R.auto-this.t<this.travel(r,this.hub(A))+r.held/r.st.shotRate+1.5||this.t<1))||(r.held>=r.st.cap*.5&&window<this.travel(r,this.hub(A))+r.held/r.st.shotRate+3)||nearFuel>12||(ph.k==='end'&&r.held>=4));
       if(wantShoot){r.mode='shoot';r.spot=this.shootSpot(r)}
     }
+    if((r.mode==='shoot'||r.mode==='stage')&&(!r.spot||this.spotTaken(r,r.spot,false))) r.spot=this.shootSpot(r);   // a partner with priority has it: move over
     if(r.mode==='shoot'){this.setGoal(r,{type:'shoot',...r.spot});return}
     if(r.held<r.st.cap&&this.fuel.length){r.mode='collect';const pf=this.pickFuel(r)||M(r.A,13.5,30);this.setGoal(r,{type:'collect',...pf});return}
     // full and waiting: stage at the barrier ready to shoot
-    r.mode='stage'; if(!r.spot)r.spot=this.shootSpot(r); this.setGoal(r,{type:'stage',...r.spot});
+    r.mode='stage'; if(!r.spot||this.spotTaken(r,r.spot,false))r.spot=this.shootSpot(r); this.setGoal(r,{type:'stage',...r.spot});
   }
   /* ---------- scripted autos (player) ---------- */
   autoThink(r){
@@ -30798,7 +30862,7 @@ class Match{
     // time to get back and empty the hopper before AUTO ends
     const mustReturn=()=>{if(!r.spot)r.spot=this.shootSpot(r);return r.held>0&&left<this.travel(r,r.spot)+r.held/r.st.shotRate+r.st.spin+.6};
     const doneLoading=()=>r.held>=r.st.cap||(r.held>0&&r.stepT>3.2)||mustReturn();
-    const shoot=()=>{r.mode='shoot';if(!r.spot)r.spot=this.shootSpot(r);this.setGoal(r,{type:'shoot',...r.spot})};
+    const shoot=()=>{r.mode='shoot';if(!r.spot||this.spotTaken(r,r.spot,false))r.spot=this.shootSpot(r);this.setGoal(r,{type:'shoot',...r.spot})};
     for(let guard=0;guard<4;guard++){
       const s=r.autoPlan[r.autoIdx]; if(!s){r.autoPlan=null;return false}
       const next=()=>{r.autoIdx++;r.spot=null;r.goal=null;r.path=[];r.fed=0;r.stepT=0;r.cyc=null;r.autoFeed=false};
@@ -30910,15 +30974,22 @@ class Match{
     // bump / barrier
     const Y=Math.abs(r.y-BAR.B)<1.3?BAR.B:Math.abs(r.y-BAR.T)<1.3?BAR.T:null;
     if(Y!==null&&!r.dash&&BUMPS.some(([a,b])=>r.x>a&&r.x<b)) sp*=r.st.bump;
-    const step=Math.min(d,sp*dt); const nx=r.x+dx/d*step, ny=r.y+dy/d*step;
+    if(crowdHold(this,r,wp,dt,o=>o.climbLv>0||o.lock>0)){r._pg=null;return}
+    let ux=dx/d, uy=dy/d; if(d>.9)[ux,uy]=crowdSteer(this,r,ux,uy,o=>o.climbLv>0);   // partners steer around each other
+    const step=Math.min(d,sp*dt); const nx=r.x+ux*step, ny=r.y+uy*step;
     if(this.blocked(r,nx,ny)){ // slide along
       if(!this.blocked(r,nx,r.y)) r.x=nx; else if(!this.blocked(r,r.x,ny)) r.y=ny;
     } else {r.x=nx;r.y=ny}
     // stuck detection
     r.stuck+= (Math.abs(r.x-r.lastX)+Math.abs(r.y-r.lastY)<sp*dt*.15)?dt:-dt*2; r.stuck=Math.max(0,r.stuck); r.lastX=r.x;r.lastY=r.y;
+    if(crowdNoProgress(r,wp,dt)) r.stuck=Math.max(r.stuck,1.25);
     if(r.stuck>1.2&&r.goal&&r.goal.type==='collect'){for(const f of this.fuel)if(Math.abs(f.x-r.goal.x)<1.2&&Math.abs(f.y-r.goal.y)<1.2)f.skipT=this.t+8;r.goal=null;r.think=0}
-    if(r.stuck>1.2){r.stuck=0;r.path.unshift({x:clamp(r.x+rnd(-3,3),1.6,25.4),y:clamp(r.y+rnd(-2,2),1.6,52.4)})}
+    if(r.stuck>1.2){r.stuck=0;
+      const nb=this.robots.filter(o=>o!==r&&Math.hypot(o.x-r.x,o.y-r.y)<ROB_R*2.4).sort((a,b)=>Math.hypot(a.x-r.x,a.y-r.y)-Math.hypot(b.x-r.x,b.y-r.y))[0];
+      if(nb&&nb.A===r.A&&(r.mode==='shoot'||r.mode==='stage')&&!this.outranks(r,nb)){r.spot=null;r.goal=null;r.think=0}   // let the partner have it
+      r.path.unshift(this.sidestep(r,nb,wp)||{x:clamp(r.x+rnd(-3,3),1.6,25.4),y:clamp(r.y+rnd(-2,2),1.6,52.4)})}
   }
+  sidestep(r,nb,wp){return crowdSidestep(this,r,nb,wp)}
   blocked(r,x,y){
     if(x<ROB_R||x>FW-ROB_R||y<ROB_R||y>FL-ROB_R) return true;
     if(this.t<this.R.auto&&(r.A==='B'?y<CENTER+ROB_R*.4:y>CENTER-ROB_R*.4)) return true; // no crossing the CENTER LINE in AUTO
@@ -31348,8 +31419,10 @@ class MatchDS{
     return out.filter(t=>!this.claims.has(t.key)||this.claims.get(t.key)===r);
   }
   rkCovered(A,ri,lv){const h=this.rk[A][ri].hatch[lv-1];return !!(h[0]&&h[1])}
+  avoiding(r,p){return !!(p&&r.avoid&&this.t<r.avoid.until&&Math.hypot(p.x-r.avoid.x,p.y-r.avoid.y)<1.5)}
   bestTarget(r,piece){
-    const list=this.targets(r,piece); if(!list.length) return null;
+    let list=this.targets(r,piece); if(!list.length) return null;
+    if(list.some(t=>!this.avoiding(r,t.spot))) list=list.filter(t=>!this.avoiding(r,t.spot));
     const A=r.A, rocketFocus=r.rr>0||r.st.reach>=2;
     let best=null,bs=1e9;
     const plan=this.planOf(r);
@@ -31369,6 +31442,8 @@ class MatchDS{
     for(const s of DS.stations){const p=M(A,s[0],s[1]);cands.push({kind:'station',spot:p,cost:this.travel(r,p)+(piece==='hatch'?r.st.hatchLoad:r.st.cargoLoad)})}
     const canFloor=piece==='hatch'?r.st.hatchFloor:r.st.cargoFloor;
     if(canFloor){for(const f of this.floor){if(f.k!==piece||f.claim&&f.claim!==r)continue;const c=this.travel(r,f)+.4;if(c<20)cands.push({kind:'floor',f,spot:{x:f.x,y:f.y},cost:c})}}
+    for(const c of cands){if(this.avoiding(r,c.spot))c.cost+=30;
+      for(const o of this.robots)if(o!==r&&o.A===A&&o.habLv<2&&o.goal&&o.goal.type!=='wait'&&Math.hypot(o.goal.x-c.spot.x,o.goal.y-c.spot.y)<ROB_R*2)c.cost+=c.kind==='floor'?4:2.5}   // a partner is already headed right there
     cands.sort((a,b)=>a.cost-b.cost); return cands[0];
   }
   release(r){if(r.task&&r.task.target)this.claims.delete(r.task.target.key);if(r.task&&r.task.src&&r.task.src.f)r.task.src.f.claim=null;r.task=null}
@@ -31405,7 +31480,7 @@ class MatchDS{
         if(!tg){r.task=null;
           if(r.noSpotSince==null) r.noSpotSince=t;
           if(t-r.noSpotSince>2.5){this.eject(r,'NO SPOT · DROPPED');r.noSpotSince=null;r.pref=r.pref==='hatch'?'cargo':'hatch';return}
-          this.setGoal(r,{type:'wait',...M(A,13.5,38)});return}
+          this.setGoal(r,{type:'wait',...crowdWait(this,r,M(A,13.5,38))});return}
         r.noSpotSince=null;
         this.release(r);r.task={type:'place',target:tg};this.claims.set(tg.key,r)}
       const sp=r.task.target.spot; this.setGoal(r,{type:'place',x:sp.x,y:sp.y}); return;
@@ -31415,7 +31490,7 @@ class MatchDS{
       const nh=this.targets(r,'hatch').length, nc=this.targets(r,'cargo').length;
       let piece=nh&&nc?(Math.random()<.5?r.pref:(r.pref==='hatch'?'cargo':'hatch')):nh?'hatch':nc?'cargo':null;
       if(r.wantPiece&&(r.wantPiece==='hatch'?nh:nc)) piece=r.wantPiece;   // the player's HATCH / CARGO toggle
-      if(!piece){this.setGoal(r,{type:'wait',...M(A,13.5,40)});return}
+      if(!piece){this.setGoal(r,{type:'wait',...crowdWait(this,r,M(A,13.5,40))});return}
       const src=this.source(r,piece); this.release(r); r.task={type:'get',piece,src}; if(src.f)src.f.claim=r;
     }
     const sp=r.task.src.spot; this.setGoal(r,{type:'get',x:sp.x,y:sp.y});
@@ -31634,10 +31709,19 @@ class MatchDS{
     const want=Math.atan2(dy,dx); let da=((want-r.a+Math.PI*3)%(Math.PI*2))-Math.PI;
     const turn=r.st.turn*dt; r.a+=clamp(da,-turn,turn);
     if(!r.st.strafe&&Math.abs(da)>.7) sp*=.3;
-    const step=Math.min(d,sp*dt), nx=r.x+dx/d*step, ny=r.y+dy/d*step;
+    if(crowdQueue(this,r)){r.stuck=0;r.lastX=r.x;r.lastY=r.y;return}   // a partner is loading there: wait our turn a robot-length back
+    if(crowdHold(this,r,wp,dt,o=>o.habLv>=2)){r.stuck=0;r.lastX=r.x;r.lastY=r.y;r._pg=null;return}
+    let ux=dx/d, uy=dy/d; if(d>.9)[ux,uy]=crowdSteer(this,r,ux,uy,o=>o.habLv>=2);   // partners steer around each other
+    const step=Math.min(d,sp*dt), nx=r.x+ux*step, ny=r.y+uy*step;
     if(this.blocked(r,nx,ny)){if(!this.blocked(r,nx,r.y))r.x=nx;else if(!this.blocked(r,r.x,ny))r.y=ny}else{r.x=nx;r.y=ny}
     r.stuck+=(Math.abs(r.x-r.lastX)+Math.abs(r.y-r.lastY)<sp*dt*.15)?dt:-dt*2; r.stuck=Math.max(0,r.stuck); r.lastX=r.x; r.lastY=r.y;
-    if(r.stuck>1.2){r.stuck=0;r.path.unshift({x:clamp(r.x+rnd(-3,3),1.6,25.4),y:clamp(r.y+rnd(-3,3),1.6,52.4)})}
+    if(crowdNoProgress(r,wp,dt)) r.stuck=Math.max(r.stuck,1.25);
+    if(r.stuck>1.2){r.stuck=0;r.unstick=(r.unstick||0)+1;
+      const nb=crowdTouching(this,r,o=>o.habLv>=2), scripted=r.autoPlan&&this.t<this.R.auto;
+      // a partner with priority wants the same place: let it have it and pick something else for a few seconds
+      if(!scripted&&!r.manual&&r.unstick>=2&&r.task&&r.task.type!=='climb'&&!r.task.forced&&crowdContested(this,r,nb)){
+        r.avoid={x:r.goal.x,y:r.goal.y,until:this.t+5};this.release(r);r.goal=null;r.path=[];r.think=0;r.unstick=0;return}
+      r.path.unshift(crowdSidestep(this,r,nb,wp)||{x:clamp(r.x+rnd(-3,3),1.6,25.4),y:clamp(r.y+rnd(-3,3),1.6,52.4)})}
   }
   collide(dt){
     const R=this.robots;
@@ -31834,6 +31918,12 @@ class GenMatch{
   get setGoalMode(){return this.G.goalModes?(r,k)=>{const md=k&&this.G.goalModes.find(x=>x.k===k);
     if(md&&md.need&&!md.need(r.st)) return {msg:md.msg||'Your robot can’t score there'};
     r.goalMode=md?k:null; if(r.held&&r.task&&r.task.type==='score'&&!r.task.auto&&md&&r.task.target.kind!==k){this.release(r);r.goal=null;r.path=[]} r.think=0; return {ok:true}}:null}
+  // the player's MODE toggle (e.g. 2024 CYCLE / FEED / CLEANUP); it takes over in TELEOP
+  get setPlayMode(){return this.G.playModes?(r,k)=>{const md=k&&this.G.playModes.find(x=>x.k===k);
+    if(md&&md.need&&!md.need(r.st)) return {msg:md.msg||'Your robot can’t do that'};
+    const was=r.playMode||null; r.playMode=md?k:null;
+    if(was!==r.playMode&&!this.isAuto()&&r.task&&!r.task.forced&&r.task.type!=='climb'){this.release(r);r.goal=null;r.path=[]}
+    r.think=0; return {ok:true,auto:this.isAuto()}}:null}
   get setWant(){return this.G.pieceTypes.length>1?(r,k)=>{r.wantPiece=k;if(k&&r.task&&r.task.type==='get'&&r.task.piece!==k){this.release(r);r.goal=null;r.path=[]}r.think=0}:null}
   can(r,k){const c=r.st.can[k];return c&&c.cap>0?c:null}
   fxText(x,y,txt,col){this.fx.push({x,y,txt,col,t:0,k:'text'})}
@@ -31897,7 +31987,8 @@ class GenMatch{
     if(c.floor){for(const f of this.floor){if(f.k!==k||f.claim&&f.claim!==r||f.held||!this.reachable(r,f))continue;if(this.G.floorOk&&!this.G.floorOk(this,r,f))continue;
       const cost=this.travel(r,f)+c.load; if(cost<22) cands.push({kind:'floor',f,spot:{x:f.x,y:f.y},cost:cost+(this.G.floorBias?this.G.floorBias(this,r,f):0)})}}
     if(this.G.sources) this.G.sources(this,r,k,cands);
-    cands.sort((a,b)=>a.cost-b.cost); return cands[0]||null;
+    const out=cands.filter(c=>!this.avoiding(r,c.spot)); for(const c of out) c.cost+=this.crowdCost(r,c.spot,c.kind==='floor'?4:2.5);
+    out.sort((a,b)=>a.cost-b.cost); return out[0]||cands.sort((a,b)=>a.cost-b.cost)[0]||null;
   }
   reachable(r,p){if(!this.blocked(r,p.x,p.y))return true;for(let i=0;i<8;i++){const a=i*.785;if(!this.blocked(r,p.x+Math.cos(a)*1.5,p.y+Math.sin(a)*1.5))return true}return false}
   /* ----- where pieces go ----- */
@@ -31905,6 +31996,7 @@ class GenMatch{
   actTime(r,t){const c=this.can(r,t.k||r.held&&r.held.k)||{};if(t.shoot)return (c.spin||.5)+(t.n||r.held&&r.held.n||1)/(c.rate||1);return (c.place||1)+((t.lv||1)-1)*(r.st.liftMove||0)+1.2+(t.extra||0)}
   bestTarget(r,k,filter){
     let list=this.targets(r,k); if(filter) list=list.filter(filter); if(!list.length) return null;
+    if(list.some(t=>!this.avoiding(r,t.spot))) list=list.filter(t=>!this.avoiding(r,t.spot));
     const plan=this.planOf(r); let best=null,bs=1e9;
     for(const t of list){
       let s=this.travel(r,t.spot)+this.actTime(r,{...t,k})-(t.val||0)*(this.G.valW||.8);
@@ -31915,6 +32007,9 @@ class GenMatch{
     return best;
   }
   claim(t,r){if(t.key)this.claims.set(t.key,r)}
+  avoiding(r,p){return !!(p&&r.avoid&&this.t<r.avoid.until&&Math.hypot(p.x-r.avoid.x,p.y-r.avoid.y)<1.5)}
+  crowdCost(r,p,w){if(!p)return 0;let c=0;for(const o of this.robots){if(o===r||o.A!==r.A||(o.done&&o.hang))continue;
+    if(o.goal&&o.goal.type!=='wait'&&Math.hypot(o.goal.x-p.x,o.goal.y-p.y)<ROB_R*2)c+=w}return c}   // a partner is already headed right there
   release(r){if(r.task&&r.task.target&&r.task.target.key&&this.claims.get(r.task.target.key)===r)this.claims.delete(r.task.target.key);if(r.task&&r.task.src&&r.task.src.f)r.task.src.f.claim=null;r.task=null}
   /* ----- AI ----- */
   think(r){
@@ -31950,7 +32045,7 @@ class GenMatch{
       if(!tg) tg=this.bestTarget(r,k);
       if(!tg){r.task=null; if(r.noSpotSince==null)r.noSpotSince=t;
         if(t-r.noSpotSince>3){this.eject(r,'NO SPOT · DROPPED');r.noSpotSince=null;r.pref=G.pieceTypes.find(x=>x!==k)||k;return}
-        const w=G.waitSpot?M(A,...G.waitSpot):M(A,13.5,38);this.setGoal(r,{type:'wait',...w});return}
+        const w=crowdWait(this,r,G.waitSpot?M(A,...G.waitSpot):M(A,13.5,38));this.setGoal(r,{type:'wait',...w});return}
       r.noSpotSince=null; this.release(r); r.task={type:'score',target:tg}; this.claim(tg,r);
       this.setGoal(r,{type:'score',x:tg.spot.x,y:tg.spot.y}); return;
     }
@@ -31961,7 +32056,7 @@ class GenMatch{
       if(G.choosePiece) k=G.choosePiece(this,r,opts)||k;
       if(r.wantPiece&&opts.includes(r.wantPiece)) k=r.wantPiece;   // the player's piece toggle
       const src=k&&this.source(r,k);
-      if(!src){const w=G.waitSpot?M(A,...G.waitSpot):M(A,13.5,38);this.setGoal(r,{type:'wait',...w});return}
+      if(!src){const w=crowdWait(this,r,G.waitSpot?M(A,...G.waitSpot):M(A,13.5,38));this.setGoal(r,{type:'wait',...w});return}
       this.goGet(r,k,src); return;
     }
     const sp=r.task.src.spot; this.setGoal(r,{type:'get',x:sp.x,y:sp.y});
@@ -32169,10 +32264,20 @@ class GenMatch{
     const want=Math.atan2(dy,dx); let da=((want-r.a+Math.PI*3)%(Math.PI*2))-Math.PI;
     const turn=r.st.turn*dt; r.a+=clamp(da,-turn,turn);
     if(!r.st.strafe&&Math.abs(da)>.7) sp*=.3;
-    const step=Math.min(d,sp*dt), nx=r.x+dx/d*step, ny=r.y+dy/d*step;
+    if(crowdQueue(this,r)){r.stuck=0;r.lastX=r.x;r.lastY=r.y;return}   // a partner is loading there: wait our turn a robot-length back
+    if(crowdHold(this,r,wp,dt,o=>o.done&&o.hang)){r.stuck=0;r.lastX=r.x;r.lastY=r.y;r._pg=null;return}
+    let ux=dx/d, uy=dy/d; if(d>.9)[ux,uy]=crowdSteer(this,r,ux,uy,o=>o.done&&o.hang);   // partners steer around each other
+    const step=Math.min(d,sp*dt), nx=r.x+ux*step, ny=r.y+uy*step;
     if(this.blocked(r,nx,ny)){if(!this.blocked(r,nx,r.y))r.x=nx;else if(!this.blocked(r,r.x,ny))r.y=ny}else{r.x=nx;r.y=ny}
     r.stuck+=(Math.abs(r.x-r.lastX)+Math.abs(r.y-r.lastY)<sp*dt*.15)?dt:-dt*2; r.stuck=Math.max(0,r.stuck); r.lastX=r.x; r.lastY=r.y;
-    if(r.stuck>1.2){r.stuck=0;r.unstick=(r.unstick||0)+1;if(r.goal&&r.unstick%2)this.planPath(r,r.goal);else r.path.unshift({x:clamp(r.x+rnd(-3,3),1.6,FW-1.6),y:clamp(r.y+rnd(-3,3),1.6,FL-1.6)});if(r.path.length>8)r.path=r.path.slice(-8)}
+    if(crowdNoProgress(r,wp,dt)) r.stuck=Math.max(r.stuck,1.25);
+    if(r.stuck>1.2){r.stuck=0;r.unstick=(r.unstick||0)+1;
+      const nb=crowdTouching(this,r,o=>o.done&&o.hang), scripted=r.autoPlan&&this.isAuto();
+      // a partner with priority wants the same place: let it have it and pick something else for a few seconds
+      if(!scripted&&!r.manual&&r.unstick>=2&&r.task&&r.task.type!=='climb'&&!r.task.forced&&crowdContested(this,r,nb)){
+        r.avoid={x:r.goal.x,y:r.goal.y,until:this.t+5};this.release(r);r.goal=null;r.path=[];r.think=0;r.unstick=0;return}
+      const sd=!this.G.ownUnjam&&crowdSidestep(this,r,nb,wp);
+      if(sd) r.path.unshift(sd); else if(r.goal&&r.unstick%2)this.planPath(r,r.goal);else r.path.unshift({x:clamp(r.x+rnd(-3,3),1.6,FW-1.6),y:clamp(r.y+rnd(-3,3),1.6,FL-1.6)});if(r.path.length>8)r.path=r.path.slice(-8)}
   }
   collide(dt){
     const R=this.robots, G=this.G;
@@ -34506,14 +34611,16 @@ defineSeason(Y,{
    Geometry from alliance B's view (its wall is y = 54). Like the real field, CRESCENDO is MIRROR-symmetric:
    T's half is B's flipped end to end only (G.mirror='reflect'), so both AMPs sit on the same side wall and each
    SOURCE is in the far corner on the opposite wall, next to the other alliance's SPEAKER end.
-   FEED boost: work the SOURCE and lob NOTES into the corner by your own SPEAKER for partners to pick up.
+   MODE (player): CYCLE (load and score), FEED (work the SOURCE and lob NOTES into the corner by your own SPEAKER for
+   partners) or CLEANUP (sweep loose NOTES off the floor and score them). SPEAKER RUSH boost: 10 s of longer-range,
+   faster, more accurate SPEAKER shots.
    ===================================================================== */
 (()=>{
 const Y=2024;
 const SPK={x:8.8,y:53.6};                       // SPEAKER opening (above the SUBWOOFER)
 const AMP={x:.4,y:48,sx:2.4,sy:48};             // AMP on the left side wall
 const SRC={x:24.6,y:2.6};                       // SOURCE in the far corner, opposite wall from the AMP
-const FEED={x:4.6,y:50.2}, FEED_R=30;          // where FEED shots land (between AMP and SPEAKER) and how far a lob carries
+const FEED={x:4.6,y:50.2};                      // where FEED shots land (between AMP and SPEAKER)
 const STG={c:[13.5,38],v:[[13.5,42.6],[9.4,35.5],[17.6,35.5]],zone:[8.6,33.4,18.4,43.6]};
 const CHAINS=[{key:'L',spot:[8.9,40.5],up:[10.9,39.4]},{key:'R',spot:[18.1,40.5],up:[16.1,39.4]},{key:'F',spot:[13.5,32.6],up:[13.5,34.9]}];
 const SPIKES=[[4.0,44.5],[8.8,44.5],[13.5,44.5]], CENTER=[[2.5,27],[8,27],[13.5,27],[19,27],[24.5,27]];
@@ -34548,13 +34655,13 @@ const hasPlayer=(m,A)=>m.robots.some(o=>o.A===A&&o.isPlayer);
 function amplify(m,A,r){const s=m.sc[A];s.bank=0;m.ampT[A]=10;m.ampLeft[A]=4;m.fxText(r.x,r.y,'AMPLIFIED!','#FFD84A')}
 function holdForAmp(m,r){   // hold a NOTE at the SPEAKER while AMPLIFY is ready but not pressed (not in the last 8 s, never against a player's own tap)
   const A=r.A, s=m.sc[A];
-  return !!r.held&&!(r.feed>0)&&!m.isAuto()&&s.bank>=2&&m.ampT[A]<=0&&hasPlayer(m,A)&&m.end-m.t>8&&!(r.task&&r.task.forced);
+  return !!r.held&&r.playMode!=='feed'&&!m.isAuto()&&s.bank>=2&&m.ampT[A]<=0&&hasPlayer(m,A)&&m.end-m.t>8&&!(r.task&&r.task.forced);
 }
 
-/* ---------------- FEED boost: SOURCE (or far-half floor NOTES) -> lob into the corner by your SPEAKER ---------------- */
+/* ---------------- FEED mode: SOURCE (or far-half floor NOTES) -> lob into the corner by your SPEAKER ---------------- */
 const ownY=(A,y)=>A==='B'?y:FL-y;                // y in the alliance's own frame (mirror only flips y)
 function feedTarget(m,r){
-  const C=M(r.A,FEED.x,FEED.y), d=dist(r,C), c=r.st.can.note;
+  const C=M(r.A,FEED.x,FEED.y), d=dist(r,C), c=r.st.can.note, FEED_R=G.feedR;   // how far a lob carries
   let spot={x:r.x,y:r.y};
   if(d>FEED_R||m.blocked(r,r.x,r.y)){spot=null;
     for(let k=FEED_R;k>=FEED_R-10&&!spot;k-=2){const p={x:C.x+(r.x-C.x)*k/d,y:C.y+(r.y-C.y)*k/d};if(!m.blocked(r,p.x,p.y))spot=p}
@@ -34572,16 +34679,33 @@ function feedThink(m,r){
   // nearest NOTE on the far half (never the ones we just fed) or the SOURCE
   const c=r.st.can.note, fast=m.rush[A]>0?.3:1, cands=[];
   for(const {s,spot} of m.stations(r,'note')) cands.push({kind:'station',st:s,spot,cost:m.travel(r,spot)+(s.time||c.load+1.2)*fast});
-  if(c.floor) for(const f of m.floor) if(f.k==='note'&&!f.held&&(!f.claim||f.claim===r)&&ownY(A,f.y)<26&&m.reachable(r,f)) cands.push({kind:'floor',f,spot:{x:f.x,y:f.y},cost:m.travel(r,f)+c.load});
+  if(c.floor) for(const f of m.floor) if(f.k==='note'&&!f.held&&(!f.claim||f.claim===r)&&ownY(A,f.y)<G.feedFloorY&&m.reachable(r,f)) cands.push({kind:'floor',f,spot:{x:f.x,y:f.y},cost:m.travel(r,f)+c.load});
   cands.sort((a,b)=>a.cost-b.cost);
   if(!cands[0]) return false;
   m.goGet(r,'note',cands[0]); return true;
+}
+
+/* ---------------- CLEANUP mode: loose NOTES off the floor (needs a floor intake); nothing left -> normal cycle ---------------- */
+function cleanupPick(m,r){
+  const A=r.A, c=r.st.can.note; if(!c.floor) return null; let best=null,bs=1e9;
+  for(const f of m.floor){if(f.k!=='note'||f.held||(f.claim&&f.claim!==r)||(f.fedFor&&f.fedFor!==A)||!m.reachable(r,f))continue;
+    const s=m.travel(r,f)+(ownY(A,f.y)<27?2.5:0); if(s<bs){bs=s;best=f}}
+  return best?{kind:'floor',f:best,spot:{x:best.x,y:best.y},cost:bs}:null;
+}
+function cleanupThink(m,r){
+  if(r.held) return false;                                        // holding one: score it like normal
+  const t=r.task;
+  if(t&&t.type==='get'&&t.src.kind==='floor'&&m.floor.includes(t.src.f)){m.setGoal(r,{type:'get',x:t.src.spot.x,y:t.src.spot.y});return true}
+  const c=cleanupPick(m,r); if(!c) return false;                  // floor is clear: keep cycling from the SOURCE
+  m.goGet(r,'note',c); return true;
 }
 
 /* ---------------- game rules for the generic engine ---------------- */
 const G={
   autoName:'AUTO', leaveY:47.6, leaveName:'LEAVE', mirror:'reflect',
   goalModes:[{k:'speaker',name:'SPEAKER'},{k:'amp',name:'AMP',need:st=>st.amp,msg:'Your robot has no AMP scorer — add one in the Pit'}],
+  playModeDefault:'CYCLE', feedR:30, feedFloorY:26, rushRange:1.6, rushMin:12,   // tuned with tools_modes24.js
+  playModes:[{k:'feed',name:'FEED'},{k:'cleanup',name:'CLEANUP',need:st=>st.can.note.floor,msg:'CLEANUP needs a floor intake — add one in the Pit'}],
   starts:{L:[4.4,50.6],C:[8.8,49.4],R:[15.6,50.6]},
   pieceTypes:['note'],
   pieces:{note:{name:'NOTE',col:'#FF8A3D',r:.55,shape:'ring',roll:false}},
@@ -34602,21 +34726,23 @@ const G={
   targets(m,r,k){
     const A=r.A, c=r.st.can.note, out=[], auto=m.isAuto(), amped=m.ampT[A]>0;
     // SPEAKER: shoot from the closest spot in range
-    const spk=M(A,SPK.x,SPK.y), d=dist(r,spk), rg=c.range;
+    const rush=r.spc>0, spk=M(A,SPK.x,SPK.y), d=dist(r,spk), rg=rush?Math.max(c.range*G.rushRange,G.rushMin):c.range;   // SPEAKER RUSH: auto-aim reaches further
     let spot={x:r.x,y:r.y};
     if(d>rg-.6||m.blocked(r,r.x,r.y)){const k2=(rg-1)/Math.max(d,.01);spot={x:spk.x+(r.x-spk.x)*k2,y:spk.y+(r.y-spk.y)*k2};
       if(m.blocked(r,spot.x,spot.y)){for(let a=0;a<12;a++){const ang=Math.atan2(r.y-spk.y,r.x-spk.x)+(a%2?1:-1)*Math.ceil(a/2)*.25;const p={x:spk.x+Math.cos(ang)*(rg-1),y:spk.y+Math.sin(ang)*(rg-1)};if(!m.blocked(r,p.x,p.y)){spot=p;break}}}}
     const dd=dist(spot,spk);
-    out.push({kind:'speaker',zone:'speaker',shoot:true,spot,at:spk,acc:c.acc*(1-.14*clamp((dd-3)/16,0,1)),val:auto?5:amped?5:2,tol:1.4});
+    out.push({kind:'speaker',zone:'speaker',shoot:true,spot,at:spk,acc:rush?Math.min(.99,c.acc+.08):c.acc*(1-.14*clamp((dd-3)/16,0,1)),val:auto?5:amped?5:2,tol:1.4});
     // AMP: needs an amp scorer
     if(r.st.amp){const sp=M(A,AMP.sx,AMP.sy);out.push({kind:'amp',zone:'amp',key:'amp'+A,spot:sp,at:M(A,AMP.x,AMP.y),val:auto?2:(m.sc[A].bank<2&&!amped?3.2:1)})}
     return out;
   },
   canScore(m,r,t){return !(t.kind==='speaker'&&holdForAmp(m,r))},
+  timeMul(m,r,tg){return tg.kind==='speaker'&&r.spc>0?.45:1},   // SPEAKER RUSH: spins up and fires in under half the time
   bias(m,r,t,plan){ // the AMP is pointless while AMPLIFIED or already full
     if(t.kind==='amp'&&(m.ampT[r.A]>0||m.sc[r.A].bank>=2)) return 4;
     return 0;
   },
+  floorOk(m,r,f){return !(f.fedFor&&f.fedFor!==r.A)},
   floorBias(m,r,f){const plan=m.planOf(r), mid=Math.abs(f.y-27)<3;return plan==='center'?(mid?-6:3):(mid?1.5:0)},
   score(m,r,tg,made,{n}){
     const A=r.A, s=m.sc[A], auto=m.isAuto();
@@ -34637,19 +34763,19 @@ const G={
       return {pts,txt:'+'+pts+' AMP',col:'#8DB9FF'};
     }
     if(tg.kind==='feed'){   // made lobs land in the corner as NOTES for partners
-      for(let i=0;i<made;i++){const a=rnd(0,6.283);m.floor.push({x:clamp(tg.at.x+rnd(-1.1,1.1),.6,FW-.6),y:clamp(tg.at.y+rnd(-1.1,1.1),.6,FL-.6),k:'note',vx:Math.cos(a)*1.5,vy:Math.sin(a)*1.5})}
+      for(let i=0;i<made;i++){const a=rnd(0,6.283);m.floor.push({x:clamp(tg.at.x+rnd(-1.1,1.1),.6,FW-.6),y:clamp(tg.at.y+rnd(-1.1,1.1),.6,FL-.6),k:'note',vx:Math.cos(a)*1.5,vy:Math.sin(a)*1.5,fedFor:A})}   // only our alliance picks these up
       s.fed=(s.fed||0)+made; r.n.fed=(r.n.fed||0)+made;
       return {pts:0,count:0,txt:made?'FED':'MISSED FEED',col:'#8DB9FF'};
     }
     return {pts:0};
   },
-  tick(m,dt){for(const r of m.robots) if(r.feed>0) r.feed=Math.max(0,r.feed-dt);
+  tick(m,dt){
     for(const A of ['B','T']){if(m.ampT[A]>0){m.ampT[A]-=dt;if(m.ampT[A]<=0||m.ampLeft[A]<=0){m.ampT[A]=0}}}},
   /* trap scorers hold their last NOTE for the TRAP */
   think(m,r){
     if(holdForAmp(m,r)){const t=G.targets(m,r,'note').find(x=>x.kind==='speaker');if(r.task&&r.task.type==='score')m.release(r);
-      m.setGoal(r,{type:'wait',x:t.spot.x,y:t.spot.y});return true}
-    if(r.feed>0&&!m.isAuto()&&!(r.task&&r.task.forced)&&feedThink(m,r)) return true;
+      const w=crowdWait(m,r,t.spot);m.setGoal(r,{type:'wait',x:w.x,y:w.y});return true}
+    if(r.playMode&&!m.isAuto()&&!(r.task&&r.task.forced)&&(r.playMode==='feed'?feedThink(m,r):cleanupThink(m,r))) return true;
     if(!r.st.trap||!r.st.climb||m.isAuto()||!r.held) return false;
     const spot=G.climbSpot(m,r); if(!spot) return false;
     if(m.end-m.t<m.travel(r,spot)+spot.time+12){m.setGoal(r,{type:'wait',x:spot.x,y:spot.y});return true}
@@ -34692,10 +34818,10 @@ const G={
   },
   total(m,A){const s=m.sc[A];return s.leave+s.speaker+s.amp+s.stage+s.trap+m.sc[other(A)].foul},
   hud(m,A){const s=m.sc[A];return m.ampT[A]>0?{on:true,text:`AMPED ${Math.ceil(m.ampT[A])}s`}:{on:false,text:s.bank>=2?'AMP READY':`AMP ${s.bank}/2`}},
-  boostOn(m,k,r){return k==='amp'?m.ampT[r.A]>0:k==='fd'?r.feed>0:false},
+  boostOn(m,k,r){return k==='amp'?m.ampT[r.A]>0:k==='rush'?r.spc>0:false},
   boostGate(m,k,r){if(k!=='amp')return null;const s=m.sc[r.A], amped=m.ampT[r.A]>0;
     return {ready:!m.isAuto()&&!amped&&s.bank>=2, sub:amped?'ACTIVE':s.bank>=2?'READY — press!':`AMP ${s.bank}/2 NOTES`, toast:'AMP READY — press AMPLIFY'}},
-  boost(m,k,r){if(k==='fd'){if(m.isAuto())return {msg:'Feeding starts in TELEOP'};r.feed=15;m.release(r);r.manual=null;r.goal=null;r.path=[];r.think=0;m.fxText(r.x,r.y,'FEEDING','#8DB9FF');return}
+  boost(m,k,r){if(k==='rush'){r.spc=10;m.fxText(r.x,r.y,'SPEAKER RUSH','#5BE3A0');return}
     if(k==='amp'){const s=m.sc[r.A];if(m.ampT[r.A]>0)return {msg:'Already AMPLIFIED'};if(s.bank<2)return {msg:`Score ${2-s.bank} more NOTE${s.bank===1?'':'S'} in the AMP first`};amplify(m,r.A,r)}},
   contribCols:['Notes','Leave+Stage'],
   robotLine(m,r){const sp=r.n.spk||0, am=r.n.amp||0, ex=r.leavePts+r.endPts;
@@ -34776,7 +34902,7 @@ defineSeason(Y,{
       shooter:{id:idx('shooter',(t.spct-t.pct)*3)},amp:{id:t.trap>=.6?'elev':t.ampP>=2.5?(T>=2.5?'elev':'flip'):t.ampP>=1?'flip':'none'},
       climber:{id:t.stage>=2.4?(T>=2.5?'winch':'hooks'):t.stage>=1?'hooks':'none'}};
   },
-  boosts:[{k:'od',name:'Overdrive',sub:'Faster 10s'},{k:'sr',name:'Source Rush',sub:'Instant loads'},{k:'df',name:'Defend',sub:'Block their best'},{k:'amp',name:'Amplify',sub:'AMP 0/2 NOTES',gate:true},{k:'fd',name:'Feed',sub:'Lob to corner'}],
+  boosts:[{k:'od',name:'Overdrive',sub:'Faster 10s'},{k:'sr',name:'Source Rush',sub:'Instant loads'},{k:'df',name:'Defend',sub:'Block their best'},{k:'amp',name:'Amplify',sub:'AMP 0/2 NOTES',gate:true},{k:'rush',name:'Speaker Rush',sub:'Aim + fire fast'}],
   autoSteps:{
     shoot:{kind:'score',shoot:true,name:'Shoot · Speaker',short:'SHOOT',desc:'Score the NOTE you hold in the SPEAKER (5 in AUTO)',filter:t=>t.kind==='speaker',at:st=>[8.8,53.6-Math.min(st.can.note.range-1,9)],pts:()=>5},
     amp:{kind:'score',name:'Score · Amp',short:'AMP',desc:'Drop the NOTE in the AMP (2 in AUTO). Needs an amp scorer.',filter:t=>t.kind==='amp',at:()=>[2.4,48],pts:st=>st.amp?2:0,note:(st,h,p)=>st.amp?'+2':'no amp scorer'},
@@ -34951,6 +35077,7 @@ const unjam=(m,r,dt)=>{
 };
 /* ---------------- game rules for the generic engine ---------------- */
 const G={
+  ownUnjam:true,    // this season's tick() runs its own unjam (station slots, ALGAE faces)
   autoName:'AUTO', leaveY:null, leaveName:'LEAVE',    // LEAVE is toward our own wall this year, so G.tick handles it
   starts:{L:[6,31.3],C:[13.5,31.3],R:[21,31.3]},
   pieceTypes:['coral','algae'],
@@ -36077,6 +36204,7 @@ function screenMatch(){
     <div class="hubline"><div class="hubpill" id="hB"><span>YOU</span><span id="hBt"></span></div><div class="hubpill" id="hT"><span>THEM</span><span id="hTt"></span></div><button class="spd" id="spd" aria-label="Match speed">${SPEED}x</button>${soundBtn()}</div>
     <div class="fieldwrap" id="fw"><canvas id="fc" tabindex="0" aria-label="Match field. With a remote or keyboard, use the arrows to aim and OK to send your robot there."></canvas><div class="fcur" id="fcur"></div></div>
     ${m.setWant?`<div class="piecebar" role="group" aria-label="Game piece"><span class="pblabel">GO FOR</span><button data-want="" class="on">AUTO</button>${(SS.game?SS.game.pieceTypes:['hatch','cargo']).map(k=>`<button data-want="${k}">${SS.game?SS.game.pieces[k].name:k.toUpperCase()}</button>`).join('')}<span class="pbheld" id="held"></span></div>`:''}
+    ${m.setPlayMode?`<div class="piecebar" role="group" aria-label="Robot mode"><span class="pblabel">MODE</span><button data-mode="" class="on">${SS.game.playModeDefault||'AUTO'}</button>${SS.game.playModes.map(g=>`<button data-mode="${g.k}">${g.name}</button>`).join('')}</div>`:''}
     ${m.setGoalMode?`<div class="piecebar" role="group" aria-label="Where to score"><span class="pblabel">SCORE IN</span><button data-goal="" class="on">AUTO</button>${SS.game.goalModes.map(g=>`<button data-goal="${g.k}">${g.name}</button>`).join('')}</div>`:''}
     <div class="boosts${BOOSTS.length>4?' b5':''}">${BOOSTS.map(b=>`<button class="boost-${b.k}" data-b="${b.k}"><span class="bn">${b.name}</span><small class="bs">${b.sub}</small><span class="cd"></span></button>`).join('')}</div>`);
   Music.play('match'); wireSound();
@@ -36088,12 +36216,13 @@ function screenMatch(){
   const cv=$('#fc'), fw=$('#fw'), ctx=cv.getContext('2d'), dpr=window.devicePixelRatio||1; let S=10;
   // TV / wide screens: the field is drawn turned on its side (long way across), labels stay upright
   const TVL=IS_TV&&innerWidth>innerHeight*1.2; if(TVL){app.classList.add('tvmatch');rotCtx(ctx)} ctx._rot=TVL;
-  const fit=()=>{if(TVL){const top=$('.mhud').offsetHeight, bot=Math.max(...[...app.querySelectorAll('.boosts,.piecebar')].map(x=>x.getBoundingClientRect().bottom-x.getBoundingClientRect().top),0),
+  const fit=()=>{if(TVL){const top=$('.mhud').offsetHeight, bot=Math.max($('.boosts').offsetHeight,[...app.querySelectorAll('.piecebar')].reduce((s,x)=>s+x.offsetHeight,0)),
       availH=innerHeight-top-bot-20,availW=innerWidth-24;S=Math.max(4,Math.min(availW/FL,availH/FW));cv.style.width=FL*S+'px';cv.style.height=FW*S+'px';cv.width=FL*S*dpr;cv.height=FW*S*dpr;requestAnimationFrame(()=>placeCur());return}
     const availH=window.innerHeight-$('.mhud').offsetHeight-$('.hubline').offsetHeight-$('.boosts').offsetHeight-[...app.querySelectorAll('.piecebar')].reduce((s,x)=>s+x.offsetHeight,0)-12,availW=fw.clientWidth-8;S=Math.max(4,Math.min(availW/FW,availH/FL));cv.style.width=FW*S+'px';cv.style.height=FL*S+'px';cv.width=FW*S*dpr;cv.height=FL*S*dpr;requestAnimationFrame(()=>placeCur())};
   fit(); window.onresize=fit;
   app.querySelectorAll('[data-b]').forEach(b=>b.onclick=()=>{const k=b.dataset.b;if(m.t<ready[k]||m.t>=m.end)return;const res=run.input('b',k);if(res&&res.msg){toast(res.msg);return}if(!(m.boostGate&&m.boostGate(k,me)))ready[k]=m.t+BOOST_CD});
   app.querySelectorAll('[data-goal]').forEach(b=>b.onclick=()=>{const res=run.input('g',b.dataset.goal||null);if(res&&res.msg)return toast(res.msg);app.querySelectorAll('[data-goal]').forEach(x=>x.classList.toggle('on',x===b))});
+  app.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{const res=run.input('m',b.dataset.mode||null);if(res&&res.msg)return toast(res.msg);app.querySelectorAll('[data-mode]').forEach(x=>x.classList.toggle('on',x===b));if(res&&res.auto)toast(b.textContent+' starts in TELEOP')});
   app.querySelectorAll('[data-want]').forEach(b=>b.onclick=()=>{run.input('w',b.dataset.want||null);app.querySelectorAll('[data-want]').forEach(x=>x.classList.toggle('on',x===b))});
   let seenEv=0;
   $('#spd').onclick=()=>{SPEED=SPEED===1?2:SPEED===2?4:1;$('#spd').textContent=SPEED+'x'};
@@ -36392,7 +36521,7 @@ function screenPractice(prev){
    A random install ID (no name, email or device info) plus small events: app opened, robot created, match played,
    replay / video / share / guide used. Batched, sent to the BOTS Admin database, never shown to other players.
    Players can turn it off from the main menu; the queue is dropped when they do. */
-const APP_VERSION='4.28';
+const APP_VERSION='4.30';
 const TELE_KEY='bots_usage_v1';
 const uuid4=()=>{if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();const b=new Uint8Array(16);crypto.getRandomValues(b);b[6]=b[6]&15|64;b[8]=b[8]&63|128;
   const h=[...b].map(x=>x.toString(16).padStart(2,'0')).join('');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`};
@@ -36708,6 +36837,11 @@ if('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('messa
 /* ---------- what's new: shown once after BOTS updates ----------
    Notes ship with the app. App-wide notes show for everyone; season notes only for seasons this player can play. */
 const WHATS_NEW=[
+  {v:'4.30',seasons:{2024:['New MODE buttons during a match: CYCLE (load and score), FEED (work your SOURCE and lob NOTES into the corner by your SPEAKER for your partners) and CLEANUP (sweep loose NOTES off the floor; needs a floor intake). Switch any time. Feeding pays off most with a slower robot and partners who score well.',
+    'New SPEAKER RUSH boost replaces the FEED boost: 10 seconds of auto-aimed SPEAKER shots from further out, with faster spin-up and better accuracy.',
+    'NOTES you feed into your corner are now yours: the other alliance won’t pick them up.']}},
+  {v:'4.29',app:['Fixed: robots getting stuck together in a shoving match. Alliance partners now steer around each other, take turns through a BUMP or a loading station, and pick shooting spots a robot-width apart. If two still want the same spot, one gives way and picks something else.'],
+    seasons:{2026:['Partners no longer park on top of each other at the HUB, so they spend more of the match shooting instead of shoving. Expect a few more points from every alliance, yours and theirs.']}},
   {v:'4.28',seasons:{2025:['Fixed: custom autos with more than one “Grab · Reef algae” step. Each grab now takes the closest ALGAE still on your REEF, so your robot keeps cycling to the NET instead of stopping after the first shot.',
     'The auto builder now counts NET and PROCESSOR shots in its time and points estimate.']}},
   {v:'4.27',app:['Every season you can play now shows on the main menu under Seasons, with a banner when a new one opens for you, including early access. Tap it to build a robot for that season.']},
@@ -36902,7 +37036,7 @@ const SEASON_GUIDE={
     manual:'https://firstfrc.blob.core.windows.net/frc2025/Manual/2025GameManual.pdf',video:'https://youtu.be/YNyzrkLxAtA'},
   2024:{overview:'Shoot NOTES into the SPEAKER, bank them in the AMP to AMPLIFY the SPEAKER, then get ONSTAGE on the chains at the end.',
     scoring:['SPEAKER: 2 (5 in AUTO, 5 while AMPLIFIED)','AMP: 1 (2 in AUTO) — two banked NOTES amplify for 10 s','LEAVE: 2','STAGE: PARK 1 · ONSTAGE 3 · HARMONY +2 · SPOTLIT +1 · TRAP 5','RP: MELODY (18 notes, 15 with co-op) · ENSEMBLE (10 stage pts + 2 onstage)'],
-    tips:['Two NOTES in your AMP make AMPLIFY ready — its button blinks. Your partners hold their NOTES at the SPEAKER until you press it, then everyone fires 5-point shots for 10 seconds.','Use SCORE IN to choose SPEAKER or AMP for your robot. Tap FEED to work your SOURCE and lob NOTES into the corner by your SPEAKER, where partners can grab and score them fast.','A floor intake is the first thing to buy — the SOURCE is a long drive away.','Longer-range shooters score from the PODIUM or WING without fighting at the SUBWOOFER.','Full-Court shooters are too tall to drive under the STAGE.','Amp scorers set up AMPLIFY; partners then score 5 per SPEAKER NOTE.','Two robots on the same chain earn HARMONY.'],
+    tips:['Two NOTES in your AMP make AMPLIFY ready — its button blinks. Your partners hold their NOTES at the SPEAKER until you press it, then everyone fires 5-point shots for 10 seconds.','Use MODE to switch your robot any time: CYCLE loads and scores, FEED works your SOURCE and lobs NOTES into the corner by your SPEAKER for partners, CLEANUP sweeps loose NOTES off the floor (needs a floor intake). SCORE IN picks SPEAKER or AMP.','SPEAKER RUSH gives you 10 seconds of auto-aimed SPEAKER shots: longer range, under half the spin-up time and better accuracy. Pair it with AMPLIFY.','A floor intake is the first thing to buy — the SOURCE is a long drive away.','Longer-range shooters score from the PODIUM or WING without fighting at the SUBWOOFER.','Full-Court shooters are too tall to drive under the STAGE.','Amp scorers set up AMPLIFY; partners then score 5 per SPEAKER NOTE.','Two robots on the same chain earn HARMONY.'],
     manual:'https://firstfrc.blob.core.windows.net/frc2024/Manual/2024GameManual.pdf',video:'https://youtube.com/playlist?list=PLZT9pIgNOV6ai8nBeeLlC1PnDIhhVHV3k'},
   2023:{overview:'Place CONES and CUBES on your GRID to build LINKS, then dock and balance on the CHARGE STATION.',
     scoring:['GRID: bottom 2 · middle 3 · top 5 (+1 in AUTO)','LINK (3 in a row): 5','MOBILITY: 3','CHARGE STATION: AUTO docked 8 / engaged 12 · END GAME docked 6 / engaged 10 · PARK 2','RP: SUSTAINABILITY (5 links, 4 with co-op) · ACTIVATION (26 charge station pts)'],
@@ -36953,7 +37087,7 @@ function screenSeasonGuide(year,next,fromPit){
   app.querySelectorAll('[data-url]').forEach(b=>b.onclick=()=>openExternal(b.dataset.url));
 }
 /* ---------- replays ----------
-   Every match runs on a seeded random generator and records the player's inputs (taps, boosts, piece toggle)
+   Every match runs on a seeded random generator and records the player's inputs (taps, boosts, piece / score / mode toggles)
    with the simulation step they happened on. Re-running the same teams + seed + inputs reproduces the match
    exactly, so a replay costs a few KB instead of a video. */
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
@@ -36969,7 +37103,7 @@ class SimRun{
     try{return fn()}finally{Math.random=o;if(SAVE&&tr!=null)SAVE.trophies=tr}}
   step(){this.wrap(()=>this.m.step(1/30));this.n++}
   input(type,...a){this.inputs.push([this.n,type,...a]);return this.apply(type,a)}
-  apply(type,a){return this.wrap(()=>type==='c'?this.m.command(this.me,a[0],a[1]):type==='b'?this.m.boost(a[0],this.me):type==='g'?(this.m.setGoalMode?this.m.setGoalMode(this.me,a[0]||null):null):this.m.setWant?this.m.setWant(this.me,a[0]||null):null)}
+  apply(type,a){return this.wrap(()=>type==='c'?this.m.command(this.me,a[0],a[1]):type==='b'?this.m.boost(a[0],this.me):type==='g'?(this.m.setGoalMode?this.m.setGoalMode(this.me,a[0]||null):null):type==='m'?(this.m.setPlayMode?this.m.setPlayMode(this.me,a[0]||null):null):this.m.setWant?this.m.setWant(this.me,a[0]||null):null)}
   record(){return {v:1,year:this.year,seed:this.seed,trophies:this.ctx.trophies,teams:this.teams,inputs:this.inputs,n:this.n}}
 }
 /* plays a recorded match forward; seeking backwards restarts it (a whole match simulates in a fraction of a second) */
